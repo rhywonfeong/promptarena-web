@@ -1,0 +1,11 @@
+{
+  // 纯静态 SPA（Workers Static Assets，assets-only 配置不能有 main/binding）
+  "name": "promptarena-web",
+  "compatibility_date": "2026-08-21",
+  // 自定义域：images.collectui.pro 子域（用户指定；根域保持空闲不动）
+  "routes": [{ "pattern": "images.collectui.pro", "custom_domain": true }],
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+  },
+}

@@ -1,0 +1,13 @@
+{
+  "name": "生图大乱斗",
+  "short_name": "生图大乱斗",
+  "description": "一条提示词并发发给多个图像模型，网格对比差异",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-1024.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" }
+  ]
+}
