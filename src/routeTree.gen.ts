@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ChangelogRouteImport } from './routes/changelog'
 import { Route as HistoryRouteImport } from './routes/history'
 import { Route as LikedRouteImport } from './routes/liked'
 import { Route as ModelsRouteImport } from './routes/models'
@@ -20,6 +21,11 @@ import { Route as HistoryBatchIdRouteImport } from './routes/history.$batchId'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ChangelogRoute = ChangelogRouteImport.update({
+  id: '/changelog',
+  path: '/changelog',
   getParentRoute: () => rootRouteImport,
 } as any)
 const HistoryRoute = HistoryRouteImport.update({
@@ -55,6 +61,7 @@ const HistoryBatchIdRoute = HistoryBatchIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/changelog': typeof ChangelogRoute
   '/history': typeof HistoryRouteWithChildren
   '/liked': typeof LikedRoute
   '/models': typeof ModelsRoute
@@ -64,6 +71,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/changelog': typeof ChangelogRoute
   '/liked': typeof LikedRoute
   '/models': typeof ModelsRoute
   '/settings': typeof SettingsRoute
@@ -73,6 +81,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/changelog': typeof ChangelogRoute
   '/history': typeof HistoryRouteWithChildren
   '/liked': typeof LikedRoute
   '/models': typeof ModelsRoute
@@ -84,6 +93,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/changelog'
     | '/history'
     | '/liked'
     | '/models'
@@ -92,10 +102,17 @@ export interface FileRouteTypes {
     | '/history/'
   fileRoutesByTo: FileRoutesByTo
   to:
-    '/' | '/liked' | '/models' | '/settings' | '/history/$batchId' | '/history'
+    | '/'
+    | '/changelog'
+    | '/liked'
+    | '/models'
+    | '/settings'
+    | '/history/$batchId'
+    | '/history'
   id:
     | '__root__'
     | '/'
+    | '/changelog'
     | '/history'
     | '/liked'
     | '/models'
@@ -106,6 +123,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ChangelogRoute: typeof ChangelogRoute
   HistoryRoute: typeof HistoryRouteWithChildren
   LikedRoute: typeof LikedRoute
   ModelsRoute: typeof ModelsRoute
@@ -119,6 +137,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/changelog': {
+      id: '/changelog'
+      path: '/changelog'
+      fullPath: '/changelog'
+      preLoaderRoute: typeof ChangelogRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/history': {
@@ -181,6 +206,7 @@ const HistoryRouteWithChildren =
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ChangelogRoute: ChangelogRoute,
   HistoryRoute: HistoryRouteWithChildren,
   LikedRoute: LikedRoute,
   ModelsRoute: ModelsRoute,

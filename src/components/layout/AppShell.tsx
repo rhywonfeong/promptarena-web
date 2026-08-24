@@ -1,5 +1,5 @@
 import { Link, useMatches } from "@tanstack/react-router";
-import { Heart, History, Images, Settings } from "lucide-react";
+import { Heart, History, Images, ScrollText, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /** 顶栏导航 + 内容区 + 全局 overlay 挂载点（查看器等在 __root 层挂，切路由不卸载）。
@@ -12,6 +12,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     { to: "/models", label: "模型", icon: Images, match: "/models" },
     { to: "/history", label: "历史", icon: History, match: "/history" },
     { to: "/liked", label: "点赞", icon: Heart, match: "/liked" },
+    { to: "/changelog", label: "日志", icon: ScrollText, match: "/changelog" },
     { to: "/settings", label: "设置", icon: Settings, match: "/settings" },
   ] as const;
 
