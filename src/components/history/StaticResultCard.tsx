@@ -55,7 +55,8 @@ export function StaticResultCard({
             {record.seconds.toFixed(1)}s
           </span>
         )}
-        <LikeButton record={record} />
+        {/* 只有成功图可点赞：失败记录点赞后永远进不了点赞页（只收成功图），别给这个入口 */}
+        {record.status === "done" && <LikeButton record={record} />}
       </div>
     </div>
   );

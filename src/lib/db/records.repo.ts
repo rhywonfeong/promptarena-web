@@ -11,6 +11,25 @@ export async function putRecord(record: GenerationRecord, imageBlob?: Blob): Pro
   await db.records.put(record);
 }
 
+/** 失败记录去重写入（用户要求：同一 prompt 反复失败不多次记录）。
+ *  事务内查同 modelId+prompt 的既有失败记录：有则复用它的 recordId/batchId
+ *  （刷新错误文案与时间，仍挂首次失败的批次下），没有才插入新的。
+ *  返回落库的 recordId（engine 用它写回卡片，打通「重试成功删旧失败」链）。 */
+export async function putFailureDedup(record: GenerationRecord): Promise<string> {
+  return db.transaction("rw", db.records, async () => {
+    const existing = await db.records
+      .filter((r) => r.status === "failed" && r.modelId === record.modelId && r.prompt === record.prompt)
+      .sortBy("createdAt");
+    const old = existing[existing.length - 1];
+    if (old) {
+      await db.records.put({ ...record, recordId: old.recordId, batchId: old.batchId });
+      return old.recordId;
+    }
+    await db.records.put(record);
+    return record.recordId;
+  });
+}
+
 /** 本轮参考图落库（同批共享一份，id: ref-{batchId}-{k}） */
 export async function putReferenceImages(
   batchId: string,
@@ -59,11 +78,10 @@ export async function listAllDesc(): Promise<GenerationRecord[]> {
 }
 
 export async function listLikedDone(): Promise<GenerationRecord[]> {
-  return db.records
-    .where("[liked+status]")
-    .between([1, "done"], [1, "done"])
-    .reverse()
-    .toArray();
+  // ⚠️ 复合索引精确键不能用 between([k],[k])：Dexie 实测查不到（equals 才命中，
+  // 点赞页一直空就是它）。[liked+status] 不含 createdAt，排序显式按时间倒序
+  const rows = await db.records.where("[liked+status]").equals([1, "done"]).toArray();
+  return rows.sort((a, b) => b.createdAt - a.createdAt);
 }
 
 export async function setLiked(recordId: string, liked: boolean): Promise<void> {
