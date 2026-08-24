@@ -1,6 +1,6 @@
-// 设置页（对应 SettingsView）五节：① API key（输入时快速验证：有效立即标识并
-// 异步开始批量翻译；无效立刻显示原因）② 翻译模型 ③ 按张计费上限
-// ④ Agent 拆分（确认开关 + 系统提示词）⑤ 计价单位 gpt2 说明（含实时汇率）。
+// 设置页（对应 SettingsView）：API key（输入时快速验证：有效立即标识并异步开始批量
+// 翻译；无效立刻显示原因）/ 受限模型同域代理 / 翻译模型 / 按张计费上限 / Agent 拆分
+// （确认开关 + 系统提示词）/ 计价单位 gpt2 说明（含实时汇率）。更新日志独立成页。
 // 关闭页面时补翻描述（换翻译模型的场景）。
 import { useEffect, useRef, useState } from "react";
 import { storedSetting, setThemeSetting, type ThemeSetting } from "@/lib/theme";
@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { settingsStore, updateSettings } from "@/stores/settings";
+import { RESTRICTED_COUNTRIES, regionName, useLoc } from "@/lib/region/loc";
 import { SPLIT_SYSTEM_PROMPT_DEFAULT, verifyApiKey } from "@/lib/openrouter/client";
 import { ensureTranslations } from "@/lib/translate/translate";
 import { GPT2_BASE_PRICE } from "@/lib/catalog/pricing";
@@ -168,7 +169,7 @@ function ApiKeySection({
         </p>
       )}
       <p className="text-xs text-muted-foreground">
-        只存在本机浏览器（localStorage），不经过任何服务器。没有 key 到{" "}
+        只存在本机浏览器（localStorage），不经过任何第三方服务器。没有 key 到{" "}
         <a
           className="underline underline-offset-2"
           href="https://openrouter.ai/settings/keys"
@@ -179,6 +180,55 @@ function ApiKeySection({
         </a>{" "}
         创建。
       </p>
+    </section>
+  );
+}
+
+/** 受限模型同域代理：经本站固定海外出口转发（CF Worker → 海外透传链路，见 worker/index.ts；默认关） */
+function ProxySection() {
+  const s = useStore(settingsStore);
+  const loc = useLoc().data;
+  return (
+    <section className="space-y-2 rounded-xl border bg-card p-4">
+      <label className="flex items-center justify-between text-sm">
+        <span>受限模型走同域代理</span>
+        <Switch
+          checked={s.proxyEnabled}
+          onCheckedChange={(v) => updateSettings({ proxyEnabled: v })}
+        />
+      </label>
+      <p className="text-xs leading-5 text-muted-foreground">
+        部分模型（如 GPT Image）不允许中国大陆 IP 直连。开启后，这类模型的请求改经本站海外出口转发，无需自备代理；API
+        key 仍只存本机浏览器，全程仅透传不存储。直连被 403 拦截的模型会自动记录，并在短暂倒计时后自动重试。
+      </p>
+      {loc && (
+        <p
+          className={cn(
+            "text-xs",
+            RESTRICTED_COUNTRIES.has(loc) ? "text-orange-600" : "text-green-600",
+          )}
+        >
+          {RESTRICTED_COUNTRIES.has(loc)
+            ? `当前 IP 位于${regionName(loc)}，建议开启。`
+            : `当前 IP 位于${regionName(loc)}，可能无需开启。`}
+        </p>
+      )}
+      {s.proxyModels.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <Label className="text-xs">已记录的受限模型</Label>
+            <button
+              className="text-xs text-primary underline underline-offset-2"
+              onClick={() => updateSettings({ proxyModels: [] })}
+            >
+              清除记录
+            </button>
+          </div>
+          <p className="font-mono text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+            {s.proxyModels.join("、")}
+          </p>
+        </div>
+      )}
     </section>
   );
 }
@@ -235,6 +285,8 @@ function SettingsPage() {
         </section>
 
         <ApiKeySection catalogReady={catalog.state === "idle"} models={catalog.models} />
+
+        <ProxySection />
 
         <section className="space-y-2 rounded-xl border bg-card p-4">
           <Label htmlFor="translate-model">翻译模型</Label>

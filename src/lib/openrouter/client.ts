@@ -5,6 +5,7 @@ import {
   emptyResultError,
   networkError,
 } from "./errors";
+import { orUrl } from "./proxy";
 import { drainStream, readSSE } from "./sse";
 import { reencodeToWritable, sniffImageMime } from "@/lib/image/reencode";
 import type {
@@ -44,6 +45,8 @@ interface FetchOptions {
   apiKey?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
+  /** 请求目标模型：地区受限且开关开时改走同域代理（见 proxy.ts） */
+  model?: string;
 }
 
 async function orFetch(path: string, init: RequestInit, opts: FetchOptions = {}) {
@@ -61,7 +64,7 @@ async function orFetch(path: string, init: RequestInit, opts: FetchOptions = {})
 
   let res: Response;
   try {
-    res = await fetch(path.startsWith("http") ? path : BASE_URL + path, {
+    res = await fetch(orUrl(path.startsWith("http") ? path : BASE_URL + path, opts.model), {
       ...init,
       headers,
       signal,
@@ -102,7 +105,7 @@ export async function generateImage(
   const res = await orFetch(
     "/images",
     { method: "POST", body: JSON.stringify(body) },
-    { apiKey: opts.apiKey, signal: opts.signal, timeoutMs: GEN_TIMEOUT_MS },
+    { apiKey: opts.apiKey, signal: opts.signal, timeoutMs: GEN_TIMEOUT_MS, model: body.model },
   );
   const text = await res.text();
   checkHTTP(res.status, text);
@@ -288,7 +291,7 @@ export async function translateDescriptions(
         response_format: { type: "json_object" },
       }),
     },
-    { apiKey: opts.apiKey, signal: opts.signal },
+    { apiKey: opts.apiKey, signal: opts.signal, model: opts.model },
   );
   const text = await res.text();
   checkHTTP(res.status, text);
@@ -362,7 +365,7 @@ export async function splitSeriesPrompt(
         stream: true,
       }),
     },
-    { apiKey: opts.apiKey, signal: opts.signal },
+    { apiKey: opts.apiKey, signal: opts.signal, model: opts.model },
   );
 
   if (!res.ok) {

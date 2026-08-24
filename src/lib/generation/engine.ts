@@ -2,14 +2,21 @@
 // 结果分发、cost 均摊入库、取消/重试、Agent 拆分。
 // 超时 abort 与用户取消的入库语义不同：前者按失败入库，后者不入库。
 import { generateImage, splitSeriesPrompt } from "@/lib/openrouter/client";
+import { isProxiedModel, isRegionBlockError, recordProxiedModel } from "@/lib/openrouter/proxy";
 import { withoutParenthetical, type ImageModelInfo } from "@/lib/openrouter/types";
 import type { CatalogPricing } from "@/lib/catalog/pricing";
 import { perImageEstimate, resolutionFor } from "./estimate";
 import type { GenerationTask } from "./task";
 import { generationStore, patchGeneration, patchTask } from "@/stores/generation";
-import { settingsStore } from "@/stores/settings";
+import { settingsStore, updateSettings } from "@/stores/settings";
 import { selectionStore } from "@/stores/selection";
-import { deleteIfFailed, putRecord, putReferenceImages, setLiked } from "@/lib/db/records.repo";
+import {
+  deleteIfFailed,
+  putFailureDedup,
+  putRecord,
+  putReferenceImages,
+  setLiked,
+} from "@/lib/db/records.repo";
 import type { GenerationRecord } from "@/lib/db/db";
 import { sizeLabel } from "@/lib/utils/format";
 import { blobToDataURL } from "@/lib/image/dataUrl";
@@ -28,7 +35,7 @@ type Outcome =
       seconds: number;
       costUsd?: number;
     }
-  | { kind: "failure"; taskIds: string[]; message: string };
+  | { kind: "failure"; taskIds: string[]; message: string; regionBlocked?: boolean };
 
 // ── 轮次上下文（模块级，不进 store —— 重试要用） ──
 let lastPrompt = "";
@@ -37,6 +44,10 @@ let lastRefImageIds: string[] = [];
 let batchId = "";
 let lastParentRecordId: string | null = null;
 let runController: AbortController | null = null;
+/** 403 自动经代理重发前的倒计时（让用户看清原始错误再动手） */
+const PROXY_RETRY_DELAY_MS = 3_000;
+// 待发的代理自动重试计时器（modelId → timer）—— 取消/新一轮/手动重试时统一清掉
+const pendingProxyRetries = new Map<string, ReturnType<typeof setTimeout>>();
 // Agent 确认暂停时扣住的轮次上下文 —— 确认后原样继续
 let heldTasks: GenerationTask[] = [];
 let heldIntent = "";
@@ -62,6 +73,7 @@ export async function start(ctx: EngineContext, onlyModels?: string[], retryOfRe
   const candidateIds = onlyModels ?? selectionSnapshot();
   if (!trimmedPrompt || !candidateIds.length || !settings.apiKey.trim()) return;
 
+  flushProxyRetries(); // 上一轮残留的自动重试不再发（卡片马上被新一批替换）
   lastPrompt = trimmedPrompt;
   lastRefs = s.draftReferences.map((r) => r.blob);
   lastParentRecordId = s.pendingParentRecordId;
@@ -302,6 +314,7 @@ function restoreInputs() {
 }
 
 export function cancel() {
+  flushProxyRetries(); // 待发的自动重试一并取消（卡片停在失败态，不自行复活）
   runController?.abort(); // 取消传播进所有请求
 }
 
@@ -347,6 +360,7 @@ export async function retryAll() {
   const failed = currentTasks().filter((t) => t.phase === "failed");
   if (!failed.length) return;
 
+  flushProxyRetries(); // 手动重试优先，待发的自动重试不再掺和
   batchId = crypto.randomUUID(); // 重试也算独立批次（沿用已落库的参考图 id）
   for (const task of failed) {
     patchTask(task.id, { phase: "loading", errorMessage: undefined, retryOfRecordId: task.recordId });
@@ -368,6 +382,7 @@ export async function retry(taskId: string) {
   if (!prompt || !settingsStore.state.apiKey.trim()) return;
   const apiKey = settingsStore.state.apiKey.trim();
 
+  flushProxyRetries(); // 手动重试优先，待发的自动重试不再掺和
   batchId = crypto.randomUUID(); // 单卡重试同样算独立批次
   // 重试来源 = 眼前这条失败记录（成功入库后自动删除它 —— 重试成功即替换）
   patchTask(taskId, { phase: "loading", errorMessage: undefined, retryOfRecordId: task.recordId });
@@ -460,7 +475,12 @@ async function runOne(
         ? { kind: "failure", taskIds, message: "请求超时（180 秒），模型太慢或网络不佳" }
         : { kind: "failure", taskIds, message: "已取消" };
     }
-    return { kind: "failure", taskIds, message: e instanceof Error ? e.message : String(e) };
+    return {
+      kind: "failure",
+      taskIds,
+      message: e instanceof Error ? e.message : String(e),
+      regionBlocked: isRegionBlockError(e),
+    };
   }
 }
 
@@ -527,7 +547,104 @@ function update(outcome: Outcome) {
     for (const taskId of outcome.taskIds) {
       failTask(taskId, outcome.message);
     }
+    // 疑似地区受限：标记卡片；开关已开 → 倒计时后整组经代理自动重发，
+    // 没开 → 卡片显示「开启代理并重试」引导（原始错误已显示、已入库）
+    if (outcome.regionBlocked) {
+      for (const taskId of outcome.taskIds) {
+        if (generationStore.state.tasks[taskId]?.phase === "failed") {
+          patchTask(taskId, { regionBlocked: true });
+        }
+      }
+      scheduleProxyRetry(outcome.taskIds);
+    }
   }
+}
+
+// ── 地区受限的代理自动重试（显示原始错误 → 倒计时 → 经代理重发） ──
+
+/** 403 疑似地区受限：记录模型 → 同组卡片挂倒计时 → 到点整组重发。
+ *  已记录/内置受限模型仍 403 说明代理也救不了，直接停在失败态（天然防循环） */
+function scheduleProxyRetry(taskIds: string[]) {
+  if (!settingsStore.state.proxyEnabled) return;
+  const modelId = generationStore.state.tasks[taskIds[0]]?.modelId;
+  if (!modelId || isProxiedModel(modelId)) return;
+  recordProxiedModel(modelId); // 记录后重发自动改走同域代理
+  const retryAt = Date.now() + PROXY_RETRY_DELAY_MS;
+  for (const taskId of taskIds) {
+    const task = generationStore.state.tasks[taskId];
+    if (task?.phase === "failed" && task.autoRetryAt == null) {
+      patchTask(taskId, { autoRetryAt: retryAt });
+    }
+  }
+  clearTimeout(pendingProxyRetries.get(modelId));
+  pendingProxyRetries.set(
+    modelId,
+    setTimeout(() => {
+      pendingProxyRetries.delete(modelId);
+      void runProxyRetry(taskIds);
+    }, PROXY_RETRY_DELAY_MS),
+  );
+}
+
+/** 倒计时到点/用户点「开启代理并重试」：整组重发（同组合单保 n 参数；
+ *  此时模型已记录，请求自动走代理）。waitForAutoRetry=false 供按钮立即触发 */
+async function runProxyRetry(taskIds: string[], waitForAutoRetry = true) {
+  const tasks = taskIds
+    .map((id) => generationStore.state.tasks[id])
+    .filter(
+      (t): t is GenerationTask =>
+        !!t && t.phase === "failed" && (!waitForAutoRetry || t.autoRetryAt != null),
+    );
+  // 已被取消/新一轮换卡/手动重试接管 → 不再发
+  if (!tasks.length || !lastPrompt || !settingsStore.state.apiKey.trim()) return;
+  const apiKey = settingsStore.state.apiKey.trim();
+  batchId = crypto.randomUUID(); // 自动重试同样算独立批次
+  for (const task of tasks) {
+    patchTask(task.id, {
+      phase: "loading",
+      errorMessage: undefined,
+      autoRetryAt: undefined,
+      retryOfRecordId: task.recordId, // 成功后自动删除这条 403 失败记录（同手动重试）
+    });
+  }
+  if (!runController) runController = new AbortController();
+  const outcome = await runOne(
+    tasks.map((t) => t.id),
+    tasks[0].modelId,
+    tasks[0].promptOverride ?? lastPrompt,
+    apiKey,
+    runController.signal, // 复用当前轮的取消链：点取消能一并停掉
+    {
+      maxReferences: tasks[0].maxReferences,
+      resolution: tasks[0].resolution,
+      aspectRatio: tasks[0].aspectRatio,
+    },
+  );
+  update(outcome);
+}
+
+/** 清掉所有待发的代理自动重试（取消/新一轮/手动重试时）：卡片停在当前失败态 */
+function flushProxyRetries() {
+  for (const timer of pendingProxyRetries.values()) clearTimeout(timer);
+  pendingProxyRetries.clear();
+  for (const task of currentTasks()) {
+    if (task.autoRetryAt != null) patchTask(task.id, { autoRetryAt: undefined });
+  }
+}
+
+/** 卡片上的「开启代理并重试」（开关没开时的 403 引导）：
+ *  开开关 + 记录模型 + 立即重发 —— 只发确认是地区 403 失败的卡
+ *  （regionBlocked 由 update 按失败原因标记；同次合单请求的卡一起重发，保 n 参数） */
+export async function enableProxyAndRetry(taskId: string) {
+  const task = generationStore.state.tasks[taskId];
+  if (!task || task.phase !== "failed" || !task.regionBlocked) return;
+  updateSettings({ proxyEnabled: true });
+  recordProxiedModel(task.modelId); // 已在清单（内置 seed）则幂等
+  flushProxyRetries();
+  const group = currentTasks().filter(
+    (t) => t.modelId === task.modelId && t.phase === "failed" && t.regionBlocked,
+  );
+  if (group.length) await runProxyRetry(group.map((t) => t.id), false);
 }
 
 function failTask(taskId: string, message: string) {
@@ -536,9 +653,8 @@ function failTask(taskId: string, message: string) {
   patchTask(taskId, { phase: "failed", errorMessage: message });
   // 失败也入库（取消不算，价值低）；记录能还原每一轮的完整经过
   if (message === "已取消") return;
-  const recordId = crypto.randomUUID();
   const record: GenerationRecord = {
-    recordId,
+    recordId: crypto.randomUUID(),
     batchId,
     modelId: task.modelId,
     modelName: task.name,
@@ -559,5 +675,7 @@ function failTask(taskId: string, message: string) {
     seriesIndex: task.seriesIndex,
     retryOfRecordId: task.retryOfRecordId,
   };
-  putRecord(record);
+  // 去重入库：同一 prompt 反复失败只保留一条（刷新错误与时间）；
+  // recordId 写回卡片，打通「重试成功自动删旧失败记录」链
+  void putFailureDedup(record).then((id) => patchTask(taskId, { recordId: id }));
 }

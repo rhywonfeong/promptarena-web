@@ -33,6 +33,10 @@ export interface GenerationTask {
   seriesIndex: number;
   /** 重试来源：本卡重试前那条失败记录的 id（成功后自动删除它） */
   retryOfRecordId?: string;
+  /** 疑似地区受限（403）时自动经代理重试的时间点（epoch ms）；undefined = 无 */
+  autoRetryAt?: number;
+  /** 本次失败疑似地区受限（403）；开关未开时卡片据此显示「开启代理并重试」 */
+  regionBlocked?: boolean;
 }
 
 /** 同模型多张的序号表（task.id → "k/N"）。按 seriesIndex（生成张序）排；

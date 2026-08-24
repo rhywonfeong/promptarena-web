@@ -96,17 +96,21 @@ export function EstimateLine() {
   );
 }
 
-/** 全军覆没横幅：所有卡片都失败 → 「本轮全部失败 · 重试全部」 */
+/** 全军覆没横幅：所有卡片都失败 → 「本轮全部失败 · 重试全部」；
+ *  等自动代理重试的卡（autoRetryAt）不算数 —— 它们还有戏；
+ *  只有一张卡时不显示（卡片自带错误与重试，横幅纯重复） */
 export function AllFailedBanner() {
   const taskOrder = useStore(generationStore, (s) => s.taskOrder);
   const allFailed = useStore(generationStore, (s) =>
-    s.taskOrder.length > 0 && !s.isRunning
-      ? s.taskOrder.every((id) => s.tasks[id]?.phase === "failed")
+    s.taskOrder.length > 1 && !s.isRunning
+      ? s.taskOrder.every(
+          (id) => s.tasks[id]?.phase === "failed" && s.tasks[id]?.autoRetryAt == null,
+        )
       : false,
   );
   if (!taskOrder.length || !allFailed) return null;
   return (
-    <div className="mx-2 flex items-center justify-center gap-3 rounded-lg border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-sm text-orange-600">
+    <div className="mx-auto flex w-fit items-center gap-3 rounded-lg border border-orange-500/40 bg-orange-500/10 px-3 py-2 text-sm text-orange-600">
       <TriangleAlert className="size-4" />
       <span>本轮全部失败</span>
       <Button variant="outline" size="sm" className="h-7 gap-1" onClick={() => void retryAll()}>

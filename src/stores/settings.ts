@@ -21,6 +21,10 @@ export interface SettingsState {
   splitSystemPrompt: string;
   /** flat_resolution_cap：按张计费模型的分辨率拉满上限 */
   flatResolutionCap: string;
+  /** proxy_enabled：地区受限模型经本站 Cloudflare Worker 同域转发（默认关） */
+  proxyEnabled: boolean;
+  /** proxy_models：直连 403 被拦、运行中自动记录的模型（完整 id） */
+  proxyModels: string[];
 }
 
 const DEFAULTS: SettingsState = {
@@ -33,6 +37,8 @@ const DEFAULTS: SettingsState = {
   askSplitConfirmation: true,
   splitSystemPrompt: "",
   flatResolutionCap: "2K",
+  proxyEnabled: false,
+  proxyModels: [],
 };
 
 export const settingsStore = new Store<SettingsState>({
