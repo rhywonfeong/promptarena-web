@@ -1,6 +1,6 @@
 // 底部输入栏（对应 ContentView.promptBar）：参考图 strip → 参数行 →
 // [添加参考图] [多行输入框] [生成/取消] → statusLine（StatusLine 独立组件）。
-import { useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { useStore } from "@tanstack/react-store";
 import { ImagePlus, Send, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -94,6 +94,15 @@ export function PromptBar({
   const fileInput = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // 高度跟随内容：必须跟着 value 走（useLayoutEffect）—— 生成后程序清空 / 取消还原
+  // 不经过 onChange，只挂 onInput 的话清空后高度会留在旧的多行值
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
+  }, [draftPrompt]);
+
   const canStart =
     draftPrompt.trim().length > 0 && selectedModels.length > 0 && !!apiKey.trim() && catalogReady;
 
@@ -166,12 +175,7 @@ export function PromptBar({
           rows={1}
           placeholder="输入提示词，开始全新一轮对比（与之前的生成互不相干）…"
           value={draftPrompt}
-          onChange={(e) => {
-            patchGeneration({ draftPrompt: e.target.value });
-            const el = e.target;
-            el.style.height = "auto";
-            el.style.height = `${Math.min(el.scrollHeight, 128)}px`;
-          }}
+          onChange={(e) => patchGeneration({ draftPrompt: e.target.value })}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
