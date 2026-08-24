@@ -7,6 +7,7 @@ import { ImageViewer } from "@/components/viewer/ImageViewer";
 import { LineageOverlay } from "@/components/viewer/LineageOverlay";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { probeStorage, type StorageProbeResult } from "@/lib/db/db";
+import { startVersionWatch } from "@/lib/updates/version";
 
 interface RouterContext {
   queryClient: QueryClient;
@@ -17,6 +18,7 @@ function RootLayout() {
   // 启动探测：Safari 私密模式 / 全局阻止 Cookie / 隐私扩展会拒写 —— 带原因告知
   useEffect(() => {
     void probeStorage().then(setProbe);
+    startVersionWatch(); // 新部署就绪后：空闲时自动刷新到新版本
   }, []);
 
   return (
