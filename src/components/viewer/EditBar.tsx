@@ -168,6 +168,7 @@ export function EditBar({
             className="max-h-24 min-h-9 border-border bg-muted/50 pr-14 text-sm text-foreground placeholder:text-muted-foreground/60"
             rows={1}
             placeholder="说说要怎么改…"
+            autoFocus
             value={draft.prompt}
             onChange={(e) => update({ prompt: e.target.value })}
             onKeyDown={(e) => {

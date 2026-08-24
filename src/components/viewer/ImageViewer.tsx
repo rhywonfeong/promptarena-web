@@ -2,7 +2,7 @@
 // 翻页 = 键盘 ←→ / 两侧点击 / 触摸滑动；缩放 = 滚轮（光标中心）/ 双指 / 双击复位；
 // 按住 H 或长按隐藏全部覆盖层（看被盖住的细节）；预取相邻页；提示词图下单行
 // 省略点击复制可展开；来源卡（父图 / 本轮参考图 + prompt）；♥ / 下载。
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useStore } from "@tanstack/react-store";
 import { useLiveQuery } from "dexie-react-hooks";
 import { ChevronLeft, ChevronRight, Download, Heart, Wand2, X, ZoomIn } from "lucide-react";
@@ -158,16 +158,16 @@ export function ImageViewer() {
           viewerClose();
         }}
       >
-        <ZoomableImage src={data.src} resetKey={index} />
-        {!hideUI && (
-          <>
-            <NavButton side="left" disabled={index === 0} onClick={() => viewerNavigate(-1)} />
-            <NavButton side="right" disabled={index === items.length - 1} onClick={() => viewerNavigate(1)} />
-            {/* 参考图查看模式：无点赞/编辑（此入口无「编辑此图」，防套娃 —— 同 iPad 版） */}
-            {item.kind !== "reference" && (
+        <ZoomableImage
+          src={data.src}
+          resetKey={index}
+          /* 点赞贴图像本身右上角（同 iPad 版，宽高比不同时不飘在黑边上）：
+           * ZoomableImage 按图像布局矩形承接浮层。参考图查看模式无点赞（防套娃 —— 同 iPad 版） */
+          overlay={
+            !hideUI && item.kind !== "reference" ? (
               <button
                 className={cn(
-                  "absolute right-3 top-3 rounded-lg bg-black/50 p-2 text-white",
+                  "pointer-events-auto absolute right-3 top-3 rounded-lg bg-black/50 p-2 text-white",
                   liked && "text-red-400",
                 )}
                 onClick={() => {
@@ -180,7 +180,13 @@ export function ImageViewer() {
               >
                 <Heart className={cn("size-5", liked && "fill-current")} />
               </button>
-            )}
+            ) : undefined
+          }
+        />
+        {!hideUI && (
+          <>
+            <NavButton side="left" disabled={index === 0} onClick={() => viewerNavigate(-1)} />
+            <NavButton side="right" disabled={index === items.length - 1} onClick={() => viewerNavigate(1)} />
             <div className="absolute bottom-3 right-3 flex gap-2">
               {data.record && canUpscale(data.record, catalog.modelById[data.record.modelId]) && (
                 <UpscaleButton record={data.record} model={catalog.modelById[data.record.modelId]} />
@@ -392,15 +398,40 @@ function NavButton({
 }
 
 /** 缩放图：滚轮（光标中心）/ 双指 / 双击复位，1–4x；resetKey 变化复位 */
-function ZoomableImage({ src, resetKey }: { src?: string; resetKey: number }) {
+function ZoomableImage({
+  src,
+  resetKey,
+  overlay,
+}: {
+  src?: string;
+  resetKey: number;
+  /** 贴图像矩形的浮层（点赞等）：容器盖在图上、透传事件给缩放手势，子元素需自带 pointer-events-auto */
+  overlay?: ReactNode;
+}) {
   const [scale, setScale] = useState(1);
   const [origin, setOrigin] = useState("50% 50%");
   const pinch = useRef<{ dist: number; scale: number } | null>(null);
   const frameRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  // 图像布局矩形（offset* 不含 zoom transform）：浮层贴图角用
+  const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
 
   useEffect(() => {
     setScale(1); // 翻页复位
   }, [resetKey, src]);
+
+  const measure = useCallback(() => {
+    const img = imgRef.current;
+    if (!img || !img.offsetWidth) return;
+    setBox({ left: img.offsetLeft, top: img.offsetTop, width: img.offsetWidth, height: img.offsetHeight });
+  }, []);
+
+  useEffect(() => {
+    if (!src) return;
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [src, measure]);
 
   function wheelZoom(e: React.WheelEvent) {
     e.preventDefault();
@@ -428,20 +459,29 @@ function ZoomableImage({ src, resetKey }: { src?: string; resetKey: number }) {
   return (
     <div
       ref={frameRef}
-      className="flex h-full w-full items-center justify-center"
+      className="relative flex h-full w-full items-center justify-center"
       onWheel={wheelZoom}
       onTouchStart={touchStart}
       onTouchMove={touchMove}
       onDoubleClick={() => setScale((s) => (s > 1 ? 1 : 2))}
     >
       {src ? (
-        <img
-          src={src}
-          alt=""
-          draggable={false}
-          className="max-h-full max-w-full object-contain transition-transform duration-150"
-          style={{ transform: `scale(${scale})`, transformOrigin: origin }}
-        />
+        <>
+          <img
+            ref={imgRef}
+            src={src}
+            alt=""
+            draggable={false}
+            onLoad={measure}
+            className="max-h-full max-w-full object-contain transition-transform duration-150"
+            style={{ transform: `scale(${scale})`, transformOrigin: origin }}
+          />
+          {overlay && box && (
+            <div className="pointer-events-none absolute" style={box}>
+              {overlay}
+            </div>
+          )}
+        </>
       ) : (
         <p className="text-sm text-muted-foreground">图片加载中…</p>
       )}
