@@ -7,8 +7,8 @@ iPad 版 PromptArena（/Users/Apple/dev/PromptArena，SwiftUI）的**独立 Web 
 - React 19 + Vite + TypeScript，TanStack Router（文件路由 `src/routes/`）/ Query（OpenRouter 三公开端点 + 汇率）/ Store（运行时状态）
 - UI：shadcn/ui（radix 底座）+ Tailwind v4
 - 数据：Dexie（IndexedDB）—— records 表 + images 表（**Blob 分表**，liveQuery 不拖全量 Blob 进内存）；设置/勾选/预设/翻译缓存/汇率 → localStorage
-- 部署：Cloudflare Workers Static Assets（纯静态，`wrangler.jsonc` assets-only，**不能有 main/binding**）；`npm run deploy`
-- 浏览器直连 OpenRouter（官方支持 CORS），API key 存 localStorage，零后端
+- 部署：Cloudflare Workers Static Assets + `/api/*` 同域透传 Worker（`wrangler.jsonc` 的 `run_worker_first: ["/api/*"]` 让 /api/* 先进 Worker，其余 asset-first 不进 Worker 不计费；OpenRouter 受限模型代理见 `worker/index.ts` 与 `src/lib/openrouter/proxy.ts`）；`npm run deploy`
+- 浏览器直连 OpenRouter（官方支持 CORS），API key 存 localStorage；唯一「后端」是自家可选的同域代理开关（设置页，默认关）：地区受限模型（403，已知 `openai/gpt-image-2` + 运行中动态记录进 `settings.proxyModels`）的请求经本站 Worker 透传，key 不落 Worker
 
 ## 常用命令
 
@@ -22,7 +22,7 @@ npm run deploy     # build + wrangler deploy
 
 ## 结构速览
 
-- `src/lib/openrouter/` — 全部 API（client/sse/types/errors），行为基准 PA/Networking/OpenRouterClient.swift
+- `src/lib/openrouter/` — 全部 API（client/sse/types/errors/proxy），行为基准 PA/Networking/OpenRouterClient.swift
 - `src/lib/generation/engine.ts` — 生成指挥官（建卡/并发/均摊入库/取消/重试/Agent 拆分），基准 PA/State/ComparisonViewModel.swift
 - `src/lib/catalog/` — 计价推导（pricing.ts，gpt2 基准 $0.011/张）+ useCatalog
 - `src/lib/db/` — Dexie schema + repos，基准 PA/Models/GenerationRecord.swift
@@ -50,6 +50,9 @@ npm run deploy     # build + wrangler deploy
 - **TanStack Store 的 setState 只接受 `(prev) => 完整 state` 的 updater**（此版本无对象 partial 形式）——用各 store 的 `patchXxx()` 辅助
 - **shadcn CLI 4.x**：`init -b radix -p <preset>` 非交互；组件装 `src/components/ui/`
 - URL 形式的生成结果可能被对端 CORS 挡下载 → 存 `remoteUrl` 用 `<img>` 展示（canvas 重编码跨域污染不可靠）
+- **OpenRouter 地区限制按「来源 IP × 模型」拦（403），域本身国内可达**——所以同域代理（`/api/or/`）粒度按模型：内置 seed ∪ 403 动态记录（`proxy.ts`），公开端点/图标/verifyApiKey 永不代理。403 判定宽（`isRegionBlockError` 只看 status），观察期后可收紧文案匹配
+- **CF Worker 的 fetch 出口跟随访问者接入舱位**（香港用户落 HKG → 出口判 HK → 仍 403，实测）：代理链路必须落固定出口 —— Worker → `or.collectui.pro`（va1 美国服务器 caddy 透传，ul-mirror tunnel 接入）→ openrouter.ai；**CF 注入的身份地理头（CF-IPCountry/CF-Connecting-IP 等）沿链路层层传染**，worker 与 caddy 两跳都要剥（`worker/index.ts` STRIP_HEADERS + va1 `/root/app/or-proxy/Caddyfile` 的 header_up -CF-*）；出口密钥 `X-Proxy-Key` = wrangler secret `PROXY_KEY` = va1 docker env = `ul-mirror/.env` 的 `OR_PROXY_KEY`
+- **Workers「SPA + API」模式**：`main` + `assets.binding` + `run_worker_first: ["/api/*"]` + Worker 内 `env.ASSETS.fetch(request)` 兜底 SPA 深链接；透传用 `new Request(上游, request)` 官方 proxy 模式（headers/body 原样、响应不读 body 直接 return 即流式，SSE/Content-Encoding 透传无坑）；Worker 里未知 `/api/*` 要显式 404 别落 ASSETS（否则 200 出 index.html 干扰排障）。`worker/` 由 `tsconfig.worker.json` 独立 project 类型检查，不进 vite build（wrangler 自行 esbuild）
 - 超时 abort 与用户取消要区分（前者按失败入库，后者不入库）：AbortSignal.timeout 的 reason 是 TimeoutError
 - objectURL 统一走 `useBlobUrl` hook 回收，别手写 createObjectURL
 - **shadcn v4 的 DropdownMenuContent 默认 `w-(--radix-dropdown-menu-trigger-width)`（菜单宽=触发按钮宽）**：长内容菜单（模型名列表）必须传 `w-auto min-w-64 max-w-80` 覆盖，否则文字竖向折行而非加宽（已踩：模型下拉）

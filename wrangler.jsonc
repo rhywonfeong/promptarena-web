@@ -1,11 +1,15 @@
 {
-  // 纯静态 SPA（Workers Static Assets，assets-only 配置不能有 main/binding）
+  // SPA 静态资源 + /api/* 同域透传 Worker（OpenRouter 受限模型代理，见 worker/index.ts）：
+  // run_worker_first 让 /api/* 先进 Worker，其余 asset-first（静态资源不进 Worker 不计费）
   "name": "promptarena-web",
   "compatibility_date": "2026-08-21",
   // 自定义域：images.collectui.pro 子域（用户指定；根域保持空闲不动）
   "routes": [{ "pattern": "images.collectui.pro", "custom_domain": true }],
+  "main": "worker/index.ts",
   "assets": {
     "directory": "./dist",
     "not_found_handling": "single-page-application",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"],
   },
 }
